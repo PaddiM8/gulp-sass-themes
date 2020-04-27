@@ -4,9 +4,9 @@ const slash = require('slash');
 const globby = require('globby');
 
 const defaultOptions = {
-  placeholder: /^.+\.(themed)\.(scss|sass)$/,
-  cwd: process.cwd(),
-  ext: '.scss'
+    placeholder: /^.+\.(themed)\.(scss|sass)$/,
+    cwd: process.cwd(),
+    ext: '.scss'
 };
 
 /**
@@ -22,41 +22,44 @@ const defaultOptions = {
  */
 module.exports = function(themes, options)
 {
-  'use strict';
+    'use strict';
 
-  let settings = Object.assign({}, defaultOptions, options);
-  let themeImports = {};
+    let settings = Object.assign({}, defaultOptions, options);
+    let themePaths = {};
+    const absoluteCwd = path.resolve(settings.cwd);
 
-  globby.sync(themes, { cwd: settings.cwd }).forEach( themePath =>
-  {
-    let themeName = path.basename(themePath, settings.ext).replace(/_(.+)/, '$1');
+    globby.sync(themes, { cwd: settings.cwd }).forEach(themePath =>
+        {
+            const themeName = path.basename(themePath, settings.ext).replace(/_(.+)/, '$1');
+            themePaths[themeName] = themePath;
+        });
 
-    themeImports[themeName] = new Buffer(`$current-theme-name: "${themeName}";\n@import "${slash(themePath)}";\n\n`);
-  });
+    return through2.obj(function(file, enc, next)
+        {
+            let files = this;
+            let filename = path.basename(file.path);
+            let dirname = path.dirname(file.path);
 
-  return through2.obj(function(file, enc, next)
-  {
-    let files = this;
-    let filename = path.basename(file.path);
-    let dirname = path.dirname(file.path);
+            if (settings.placeholder.test(filename))
+            {
+                for (const themeName in themePaths)
+                {
+                    let themedFile = file.clone();
+                    const diff = dirname.split(absoluteCwd)[1];
+                    const filePath = diff.replace(/(\/|\\)[^(\/|\\)]+/, "../") + themePaths[themeName];
+                    const importStr = `$current-theme-name: "${themeName}";\n@import "${slash(filePath)}";\n\n`;
 
-    if(settings.placeholder.test(filename))
-    {
-      Object.keys(themeImports).forEach( themeName =>
-      {
-        let themedFile = file.clone();
+                    themedFile.contents = Buffer.concat([Buffer.from(importStr), themedFile.contents]);
+                    themedFile.path = path.join(dirname, filename.replace(filename.match(settings.placeholder)[1], themeName));
 
-        themedFile.contents = Buffer.concat([themeImports[themeName], themedFile.contents]);
-        themedFile.path = path.join(dirname, filename.replace(filename.match(settings.placeholder)[1], themeName));
+                    files.push(themedFile);
+                }
+            }
+            else
+            {
+                files.push(file);
+            }
 
-        files.push(themedFile);
-      });
-    }
-    else
-    {
-      files.push(file);
-    }
-
-    next();
-  });
+            next();
+        });
 };
